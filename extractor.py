@@ -65,7 +65,7 @@ class NFSeExtractor:
     def __init__(self):
         self.patterns = {
             'duque_caxias': self._extract_duque_caxias,
-            'rio_danfse': self._extract_rio_danfse,
+            'danfse_v1': self._extract_danfse_v1,
             'generic': self._extract_generic
         }
     
@@ -103,13 +103,25 @@ class NFSeExtractor:
             raise Exception(f"Erro ao processar PDF {filename}: {str(e)}")
     
     def _detect_pattern(self, text: str) -> str:
-        """Detecta o padrão de layout da NFS-e"""
+        """
+        Detecta o padrão de layout da NFS-e.
+        
+        Padrões suportados:
+        - duque_caxias: ISSNet Online (Duque de Caxias)
+        - danfse_v1: DANFSe v1.0 (Nacional - múltiplos municípios)
+        - generic: Fallback genérico
+        """
         text_lower = text.lower()
         
+        # Duque de Caxias - ISSNet Online (padrão específico)
         if 'duque de caxias' in text_lower and 'issnetonline' in text_lower:
             return 'duque_caxias'
-        elif 'danfse' in text_lower and 'rio de janeiro' in text_lower:
-            return 'rio_danfse'
+        
+        # DANFSe v1.0 - Padrão Nacional (usado por vários municípios)
+        elif 'danfse' in text_lower or 'danfse v1.0' in text_lower:
+            return 'danfse_v1'
+        
+        # Fallback genérico
         else:
             return 'generic'
     
@@ -164,19 +176,23 @@ class NFSeExtractor:
         if match:
             data.tomador_inscricao = match.group(1)
         
-        # Valores
-        match = re.search(r'Vl\.?\s*Total dos Serviços.*?R\$\s*([\d.,]+)', text, re.DOTALL)
-        if match:
-            data.valor_servicos = self._parse_decimal(match.group(1))
-        else:
-            # Tenta padrão alternativo
-            match = re.search(r'Valor.*?Servi[çc]os?.*?R?\$?\s*([\d.,]+)', text, re.IGNORECASE)
-            if match:
-                data.valor_servicos = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'Base de Cálculo.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.base_calculo = self._parse_decimal(match.group(1))
+        # Valores (abordagem baseada em linhas para capturar colunas)
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            # Linha de cabeçalho dos valores
+            if 'Vl. Total dos Serviços' in line and i + 1 < len(lines):
+                valores_line = lines[i + 1]
+                # Extrai todos os valores R$
+                valores = re.findall(r'R\$\s*([\d.,]+)', valores_line)
+                if len(valores) >= 4:
+                    data.valor_servicos = self._parse_decimal(valores[0])  # Vl. Total dos Serviços
+                    data.base_calculo = self._parse_decimal(valores[3])    # Base de Cálculo
+                # Verifica se ISS foi retido
+                if 'Sim' in valores_line:
+                    data.iss_retido = "Sim"
+                elif 'Não' in valores_line:
+                    data.iss_retido = "Não"
+                break
         
         match = re.search(r'Alíquota\s*([\d.,]+)', text)
         if match:
@@ -190,47 +206,32 @@ class NFSeExtractor:
         if match:
             data.iss_retido = match.group(1).capitalize()
         
-        match = re.search(r'Vl\.\s*ISSQN Retido.*?R\$\s*([\d.,]+)', text)
-        if match:
-            iss_retido_valor = self._parse_decimal(match.group(1))
-            if iss_retido_valor > 0:
-                data.iss_retido = "Sim"
-                data.iss_valor = iss_retido_valor
+        # Vl. ISSQN Retido e Vl. Líquido (linha de tributos)
+        for i, line in enumerate(lines):
+            if 'Vl. ISSQN Retido' in line and 'Vl. Líquido da Nota Fiscal' in line and i + 1 < len(lines):
+                valores_line = lines[i + 1]
+                # Extrai todos os valores R$
+                valores = re.findall(r'R\$\s*([\d.,]+)', valores_line)
+                if len(valores) >= 8:
+                    data.pis = self._parse_decimal(valores[0])
+                    data.cofins = self._parse_decimal(valores[1])
+                    data.inss = self._parse_decimal(valores[2])
+                    data.irrf = self._parse_decimal(valores[3])
+                    data.csll = self._parse_decimal(valores[4])
+                    data.outras_retencoes = self._parse_decimal(valores[5])
+                    data.iss_valor = self._parse_decimal(valores[6])  # Vl. ISSQN Retido
+                    data.valor_liquido = self._parse_decimal(valores[7])  # Vl. Líquido
+                    
+                    if data.iss_valor > 0:
+                        data.iss_retido = "Sim"
+                break
         
         # Município de retenção (sempre o tomador para Duque de Caxias)
         match = re.search(r'Município Incidência\s*([^\n]+)', text)
         if match and data.iss_retido == "Sim":
             data.municipio_retencao = match.group(1).strip()
         
-        # Tributos federais
-        match = re.search(r'PIS.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.pis = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'COFINS.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.cofins = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'CSLL.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.csll = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'IRRF.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.irrf = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'INSS.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.inss = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'Outras Retenções.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.outras_retencoes = self._parse_decimal(match.group(1))
-        
-        # Valor líquido
-        match = re.search(r'Vl\.\s*Líquido da Nota Fiscal\s*R\$\s*([\d.,]+)', text)
-        if match:
-            data.valor_liquido = self._parse_decimal(match.group(1))
+        # Tributos federais e valor líquido já extraídos acima na linha de valores
         
         # Calcula total de tributos retidos
         data.total_tributos_retidos = (
@@ -250,118 +251,12 @@ class NFSeExtractor:
         
         return data
     
-    def _extract_rio_danfse(self, text: str) -> NFSeData:
-        """Extrai dados do padrão Rio de Janeiro (DANFSe Nacional)"""
-        data = NFSeData()
-        
-        # Número da nota
-        match = re.search(r'Número da NFS-e\s*(\d+)', text, re.IGNORECASE)
-        if match:
-            data.numero_nota = match.group(1)
-        
-        # Datas
-        match = re.search(r'Data e Hora da emiss[ãa]o da NFS-e\s*(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
-        if match:
-            data.data_emissao = match.group(1)
-        else:
-            # Tenta capturar apenas data sem hora
-            match = re.search(r'emiss[ãa]o.*?(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
-            if match:
-                data.data_emissao = match.group(1)
-        
-        match = re.search(r'Competência da NFS-e\s*(\d{2}/\d{2}/\d{4})', text)
-        if match:
-            data.data_competencia = match.group(1)
-        
-        data.municipio = "Rio de Janeiro - RJ"
-        
-        # Chave de acesso
-        match = re.search(r'Chave de Acesso da NFS-e\s*(\d+)', text)
-        if match:
-            data.chave_acesso = match.group(1)
-        
-        # Prestador
-        match = re.search(r'EMITENTE.*?CNPJ.*?(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', text, re.DOTALL)
-        if match:
-            data.prestador_cnpj = match.group(1)
-        
-        match = re.search(r'Nome / Nome Empresarial\s*(?:\d+\.\d+\.\d+\s+)?([A-Z\s]+)', text)
-        if match:
-            data.prestador_nome = match.group(1).strip()
-        
-        # Tomador
-        match = re.search(r'TOMADOR.*?CNPJ.*?(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', text, re.DOTALL)
-        if match:
-            data.tomador_cnpj = match.group(1)
-        
-        match = re.search(r'TOMADOR.*?Nome.*?([A-Z\s]+?)(?:\n|E-mail)', text, re.DOTALL)
-        if match:
-            nome = match.group(1).strip()
-            # Remove números do CNPJ que podem vir junto
-            nome = re.sub(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', '', nome).strip()
-            data.tomador_nome = nome
-        
-        # Valores
-        match = re.search(r'Valor do Serviço\s*R\$\s*([\d.,]+)', text)
-        if match:
-            data.valor_servicos = self._parse_decimal(match.group(1))
-            data.base_calculo = data.valor_servicos  # Para MEI geralmente é o mesmo
-        
-        # ISS
-        match = re.search(r'Retenção do ISSQN\s*(Não Retido|Retido)', text)
-        if match:
-            data.iss_retido = "Sim" if "Retido" in match.group(1) and "Não" not in match.group(1) else "Não"
-        
-        match = re.search(r'ISSQN Retido.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.iss_valor = self._parse_decimal(match.group(1))
-            if data.iss_valor > 0:
-                data.iss_retido = "Sim"
-        
-        match = re.search(r'Município de Incidência do ISSQN\s*([^\n]+)', text)
-        if match and data.iss_retido == "Sim":
-            data.municipio_retencao = match.group(1).strip()
-        
-        # Tributos federais (geralmente zero para MEI)
-        match = re.search(r'IRRF.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.irrf = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'PIS.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.pis = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'COFINS.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.cofins = self._parse_decimal(match.group(1))
-        
-        match = re.search(r'CSLL.*?R\$\s*([\d.,]+)', text)
-        if match:
-            data.csll = self._parse_decimal(match.group(1))
-        
-        # Valor líquido
-        match = re.search(r'Valor Líquido da NFS-e\s*R\$\s*([\d.,]+)', text)
-        if match:
-            data.valor_liquido = self._parse_decimal(match.group(1))
-        
-        # Calcula total de tributos
-        data.total_tributos_retidos = (
-            data.iss_valor + data.pis + data.cofins + 
-            data.csll + data.irrf + data.inss + data.outras_retencoes
-        )
-        
-        # Descrição do serviço
-        match = re.search(r'Descrição do Serviço\s*([^\n]+(?:\n[^\n]+){0,5}?)(?:\n\n|TRIBUTAÇÃO)', text, re.DOTALL)
-        if match:
-            data.descricao_servico = match.group(1).strip()
-        
-        # Código de atividade
-        match = re.search(r'Código de Tributação Nacional\s*([^\n]+)', text)
-        if match:
-            data.codigo_atividade = match.group(1)
-        
-        return data
+    def _extract_danfse_v1(self, text: str) -> NFSeData:
+        """Wrapper para função melhorada"""
+        from extractor_danfse_v2 import extract_danfse_v1_improved
+        return extract_danfse_v1_improved(text)
     
+
     def _extract_generic(self, text: str) -> NFSeData:
         """Extração genérica para padrões não identificados"""
         data = NFSeData()
