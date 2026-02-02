@@ -185,8 +185,8 @@ class NFSeConsolidator:
             {'Métrica': '', 'Valor': ''},
             
             {'Métrica': 'RETENÇÕES', 'Valor': ''},
-            {'Métrica': 'Notas com ISS Retido', 'Valor': f'{notas_iss_retido} ({notas_iss_retido/total_notas*100:.1f}%)'},
-            {'Métrica': 'Notas sem ISS Retido', 'Valor': f'{total_notas - notas_iss_retido} ({(total_notas-notas_iss_retido)/total_notas*100:.1f}%)'},
+            {'Métrica': 'Notas com ISS Retido', 'Valor': f'{notas_iss_retido} ({(notas_iss_retido/total_notas*100 if total_notas > 0 else 0):.1f}%)'},
+            {'Métrica': 'Notas sem ISS Retido', 'Valor': f'{total_notas - notas_iss_retido} ({((total_notas-notas_iss_retido)/total_notas*100 if total_notas > 0 else 0):.1f}%)'},
             {'Métrica': '', 'Valor': ''},
             
             {'Métrica': 'POR MUNICÍPIO', 'Valor': ''},

@@ -4,10 +4,11 @@ Suporta múltiplos padrões de layout municipal
 """
 
 import re
+import os
 import pdfplumber
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 
 @dataclass
@@ -98,7 +99,8 @@ class NFSeExtractor:
             return data
             
         except Exception as e:
-            raise Exception(f"Erro ao processar PDF {pdf_path}: {str(e)}")
+            filename = os.path.basename(pdf_path)
+            raise Exception(f"Erro ao processar PDF {filename}: {str(e)}")
     
     def _detect_pattern(self, text: str) -> str:
         """Detecta o padrão de layout da NFS-e"""
@@ -393,7 +395,15 @@ class NFSeExtractor:
         return data
     
     def _parse_decimal(self, value: str) -> Decimal:
-        """Converte string monetária para Decimal"""
+        """
+        Converte string monetária para Decimal.
+        
+        Args:
+            value: String contendo valor monetário (ex: "1.234,56")
+            
+        Returns:
+            Valor convertido para Decimal com 2 casas decimais
+        """
         if not value or value == '-':
             return Decimal("0.00")
         
@@ -402,7 +412,8 @@ class NFSeExtractor:
         
         try:
             return Decimal(value).quantize(Decimal("0.01"))
-        except:
+        except (ValueError, InvalidOperation):
+            # Retorna zero se não conseguir converter
             return Decimal("0.00")
     
     def extract_batch(self, pdf_paths: List[str]) -> List[NFSeData]:

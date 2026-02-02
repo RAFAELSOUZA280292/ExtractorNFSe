@@ -113,8 +113,19 @@ with tab1:
             "Selecione os arquivos PDF das NFS-e",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Você pode selecionar múltiplos arquivos PDF de uma vez"
+            help="Você pode selecionar múltiplos arquivos PDF de uma vez (máx. 10 MB por arquivo)"
         )
+        
+        # Validação de tamanho de arquivo
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+        if uploaded_files:
+            valid_files = []
+            for file in uploaded_files:
+                if file.size > MAX_FILE_SIZE:
+                    st.error(f"❌ Arquivo {file.name} excede o tamanho máximo de 10 MB")
+                else:
+                    valid_files.append(file)
+            uploaded_files = valid_files if valid_files else None
     
     with col2:
         st.info(f"""
@@ -122,7 +133,7 @@ with tab1:
         
         **Formatos aceitos:** PDF
         
-        **Limite:** Sem limite
+        **Limite:** 10 MB por arquivo
         """)
     
     if uploaded_files:
@@ -159,6 +170,7 @@ with tab1:
                 progress_bar.progress(progress)
                 status_text.text(f"Processando {uploaded_file.name}...")
                 
+                tmp_path = None
                 try:
                     # Salva arquivo temporário
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
@@ -169,11 +181,15 @@ with tab1:
                     data = extractor.extract_from_pdf(tmp_path)
                     extracted_data.append(data)
                     
-                    # Remove arquivo temporário
-                    os.unlink(tmp_path)
-                    
                 except Exception as e:
                     errors.append(f"{uploaded_file.name}: {str(e)}")
+                finally:
+                    # Garante remoção do arquivo temporário
+                    if tmp_path and os.path.exists(tmp_path):
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
+                            pass  # Ignora erros ao remover arquivo temporário
             
             progress_bar.progress(1.0)
             status_text.text("✅ Processamento concluído!")
