@@ -226,10 +226,43 @@ def extract_danfse_v1_improved(text: str) -> NFSeData:
             if match:
                 data.valor_liquido = _parse_decimal(match.group(1))
         
+        # Contribuição Previdenciária - Retida (variação de INSS)
+        # Formato: IRRF ContribuiçãoPrevidenciária-Retida ContribuiçõesSociais-Retidas
+        # Valores:  -    R$557,73                           -
+        if 'ContribuiçãoPrevidenciária-Retida' in line or 'Contribuição Previdenciária - Retida' in line:
+            if i + 1 < len(lines):
+                valores_line = lines[i + 1]
+                # Split por espaços
+                partes = valores_line.split()
+                
+                # Primeira parte: IRRF
+                if len(partes) >= 1 and partes[0] != '-':
+                    match = re.search(r'([\d.,]+)', partes[0])
+                    if match:
+                        data.irrf = _parse_decimal(match.group(1))
+                
+                # Segunda parte: Contribuição Previdenciária (INSS)
+                if len(partes) >= 2 and partes[1] != '-':
+                    match = re.search(r'([\d.,]+)', partes[1])
+                    if match:
+                        data.inss = _parse_decimal(match.group(1))
+                        if data.inss > 0:
+                            # Marca como retido se houver valor
+                            pass  # INSS retido é diferente de ISS retido
+                
+                # Terceira parte: Contribuições Sociais (PIS/COFINS)
+                if len(partes) >= 3 and partes[2] != '-':
+                    match = re.search(r'([\d.,]+)', partes[2])
+                    if match:
+                        total = _parse_decimal(match.group(1))
+                        if total > 0:
+                            data.pis = total * Decimal("0.178")
+                            data.cofins = total * Decimal("0.822")
+        
         # Seção VALOR TOTAL DA NFS-E (valores em colunas)
         # Formato: IRRF,CP,CSLL-Retidos PIS/COFINSRetidos ValorLíquidodaNFS-e
         # Valores:  R$0,00              -                 R$3.450,00
-        if 'IRRF,CP,CSLL-Retidos' in line or 'IRRF, CP, CSLL - Retidos' in line:
+        elif 'IRRF,CP,CSLL-Retidos' in line or 'IRRF, CP, CSLL - Retidos' in line:
             if i + 1 < len(lines):
                 valores_line = lines[i + 1]
                 # Split por espaços
