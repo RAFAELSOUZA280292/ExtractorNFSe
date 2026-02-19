@@ -179,6 +179,8 @@ with tab1:
                     
                     # Extrai dados
                     data = extractor.extract_from_pdf(tmp_path)
+                    # Preserva o nome original do arquivo
+                    data.arquivo_origem = uploaded_file.name
                     extracted_data.append(data)
                     
                 except Exception as e:
