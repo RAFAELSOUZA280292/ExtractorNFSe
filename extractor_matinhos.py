@@ -93,12 +93,24 @@ def extract_matinhos(text: str) -> NFSeData:
     for i, line in enumerate(lines):
         line_clean = line.strip()
         
-        # Número da NFS-e
+        # Número da NFS-e (pode estar na mesma linha ou próxima)
         if 'Número da NFS-e' in line:
-            if i + 1 < len(lines):
-                match = re.search(r'(\d+)', lines[i + 1])
+            # Tenta extrair da mesma linha primeiro
+            match = re.search(r'Número da NFS-e\s+(\d+)', line)
+            if match:
+                data.numero_nota = match.group(1)
+            # Se não encontrou, procura na próxima linha
+            # Evita pegar número de endereço (precedido por "-")
+            elif i + 1 < len(lines):
+                # Procura números isolados (não precedidos por "-" ou ",")
+                match = re.search(r'(?<![-,])\s+(\d{1,5})(?=\s|$)', lines[i + 1])
                 if match:
                     data.numero_nota = match.group(1)
+                # Fallback: pega o último número da linha (geralmente é o correto)
+                else:
+                    numeros = re.findall(r'\b(\d{1,5})\b', lines[i + 1])
+                    if numeros:
+                        data.numero_nota = numeros[-1]
         
         # Situação
         if 'Situação' in line and 'Emitida' in ''.join(lines[i:i+3]):
@@ -218,16 +230,46 @@ def extract_matinhos(text: str) -> NFSeData:
             if match and 'SIMPLES' not in line:
                 data.iss_aliquota = _parse_decimal(match.group(1))
         
-        # Valor Total
-        if 'Valor Total' in line:
+        # Linha com Valor Total Desc. Incondicional Dedução Base de Cálculo ISSQN (layout novo)
+        # Exemplo: 7.000,00 0,00 0,00 7.000,00 0,00
+        if 'Valor Total' in line and 'Base de Cálculo' in line and 'ISSQN' in line:
+            # Cabeçalho, valores estão na próxima linha
+            if i + 1 < len(lines):
+                valores = re.findall(r'([\d.,]+)', lines[i + 1])
+                if len(valores) >= 5:
+                    # Ordem: Valor Total, Desc. Incond., Dedução, Base Cálculo, ISSQN
+                    data.valor_servicos = _parse_decimal(valores[0])
+                    # Desc. Incondicional (valores[1]) - pode ser armazenado se necessário
+                    # Dedução (valores[2])
+                    data.base_calculo = _parse_decimal(valores[3])
+                    # ISSQN (valores[4]) - geralmente 0 quando há ISSRF
+        
+        # Valor Total (layout antigo)
+        elif 'Valor Total' in line:
             match = re.search(r'([\d.,]+)', line)
             if match:
                 valor_total = _parse_decimal(match.group(1))
                 if valor_total > 0:
                     data.valor_servicos = valor_total
         
-        # ISSRF (ISS Retido na Fonte) - linha separada
-        if line.strip() == 'ISSRF' or re.match(r'^ISSRF\s', line):
+        # Linha com ISSRF IR INSS CSLL COFINS (layout novo)
+        # Exemplo: 350,00 0,00 770,00 0,00 0,00
+        if 'ISSRF' in line and 'IR' in line and 'INSS' in line and 'CSLL' in line and 'COFINS' in line:
+            # Cabeçalho, valores estão na próxima linha
+            if i + 1 < len(lines):
+                valores = re.findall(r'([\d.,]+)', lines[i + 1])
+                if len(valores) >= 5:
+                    # Ordem: ISSRF, IR, INSS, CSLL, COFINS
+                    data.iss_valor = _parse_decimal(valores[0])
+                    if data.iss_valor > 0:
+                        data.iss_retido = "Sim"
+                    data.irrf = _parse_decimal(valores[1])
+                    data.inss = _parse_decimal(valores[2])
+                    data.csll = _parse_decimal(valores[3])
+                    data.cofins = _parse_decimal(valores[4])
+        
+        # ISSRF (ISS Retido na Fonte) - linha separada (layout antigo)
+        elif line.strip() == 'ISSRF' or re.match(r'^ISSRF\s', line):
             # Procura valor na mesma linha ou próxima
             valores = re.findall(r'([\d.,]+)', line)
             if valores:
@@ -243,8 +285,8 @@ def extract_matinhos(text: str) -> NFSeData:
                         data.iss_valor = issrf
                         data.iss_retido = "Sim"
         
-        # INSS
-        if line.strip() == 'INSS' or 'INSS' in line:
+        # INSS (layout antigo - evita cabeçalho e CEI)
+        if (line.strip() == 'INSS' or ('INSS' in line and 'ISSRF' not in line and 'IR' not in line and 'CEI' not in line and 'Cadastro' not in line)):
             if i + 1 < len(lines):
                 match = re.search(r'([\d.,]+)', lines[i + 1])
                 if match:
@@ -265,8 +307,8 @@ def extract_matinhos(text: str) -> NFSeData:
                 if match:
                     data.irrf = _parse_decimal(match.group(1))
         
-        # CSLL
-        if line.strip() == 'CSLL' or 'CSLL' in line:
+        # CSLL (layout antigo - evita cabeçalho)
+        if (line.strip() == 'CSLL' or ('CSLL' in line and 'ISSRF' not in line and 'COFINS' not in line)):
             if i + 1 < len(lines):
                 match = re.search(r'([\d.,]+)', lines[i + 1])
                 if match:
@@ -276,8 +318,8 @@ def extract_matinhos(text: str) -> NFSeData:
                 if match:
                     data.csll = _parse_decimal(match.group(1))
         
-        # COFINS
-        if line.strip() == 'COFINS' or 'COFINS' in line:
+        # COFINS (layout antigo - evita cabeçalho)
+        if (line.strip() == 'COFINS' or ('COFINS' in line and 'ISSRF' not in line and 'CSLL' not in line)):
             if i + 1 < len(lines):
                 match = re.search(r'([\d.,]+)', lines[i + 1])
                 if match:
@@ -287,8 +329,22 @@ def extract_matinhos(text: str) -> NFSeData:
                 if match:
                     data.cofins = _parse_decimal(match.group(1))
         
-        # PIS
-        if line.strip() == 'PIS' or re.match(r'^PIS\s', line):
+        # Linha com PIS Outras Retenções Total Trib. Federais Desc. Condicional Valor Líquido (layout novo)
+        # Exemplo: 0,00 0,00 770,00 0,00 5.880,00
+        if 'PIS' in line and 'Outras Retenções' in line and 'Total Trib. Federais' in line and 'Valor Líquido' in line:
+            # Cabeçalho, valores estão na próxima linha
+            if i + 1 < len(lines):
+                valores = re.findall(r'([\d.,]+)', lines[i + 1])
+                if len(valores) >= 5:
+                    # Ordem: PIS, Outras Ret., Total Trib. Fed., Desc. Cond., Valor Líquido
+                    data.pis = _parse_decimal(valores[0])
+                    data.outras_retencoes = _parse_decimal(valores[1])
+                    # Total Trib. Federais (valores[2]) - não armazenamos separadamente
+                    # Desc. Condicional (valores[3]) - não armazenamos
+                    data.valor_liquido = _parse_decimal(valores[4])
+        
+        # PIS (layout antigo)
+        elif line.strip() == 'PIS' or re.match(r'^PIS\s', line):
             if i + 1 < len(lines):
                 match = re.search(r'([\d.,]+)', lines[i + 1])
                 if match:
@@ -298,8 +354,8 @@ def extract_matinhos(text: str) -> NFSeData:
                 if match:
                     data.pis = _parse_decimal(match.group(1))
         
-        # Valor Líquido
-        if 'Valor Líquido' in line or 'Valor Liquido' in line:
+        # Valor Líquido (layout antigo)
+        elif 'Valor Líquido' in line or 'Valor Liquido' in line:
             match = re.search(r'([\d.,]+)', line)
             if match:
                 data.valor_liquido = _parse_decimal(match.group(1))
