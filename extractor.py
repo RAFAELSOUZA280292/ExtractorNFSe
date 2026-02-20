@@ -10,6 +10,14 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from decimal import Decimal, InvalidOperation
 
+# Importa bibliotecas de OCR (opcionais)
+try:
+    from pdf2image import convert_from_path
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 # Importa extratores especializados
 from extractor_matinhos import extract_matinhos
 
@@ -87,7 +95,13 @@ class NFSeExtractor:
             with pdfplumber.open(pdf_path) as pdf:
                 text = ""
                 for page in pdf.pages:
-                    text += page.extract_text() + "\n"
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            
+            # Se texto vazio e OCR disponível, tenta OCR
+            if not text.strip() and OCR_AVAILABLE:
+                text = self._extract_text_with_ocr(pdf_path)
             
             # Detecta o padrão do layout
             pattern_type = self._detect_pattern(text)
@@ -133,6 +147,32 @@ class NFSeExtractor:
         # Fallback genérico
         else:
             return 'generic'
+    
+    def _extract_text_with_ocr(self, pdf_path: str) -> str:
+        """
+        Extrai texto de PDF usando OCR (para PDFs em formato de imagem).
+        
+        Args:
+            pdf_path: Caminho para o arquivo PDF
+            
+        Returns:
+            Texto extraído via OCR
+        """
+        try:
+            # Converte PDF para imagens
+            images = convert_from_path(pdf_path)
+            
+            # Extrai texto de cada página com OCR
+            text = ""
+            for image in images:
+                page_text = pytesseract.image_to_string(image, lang='por')
+                text += page_text + "\n"
+            
+            return text
+            
+        except Exception as e:
+            # Se OCR falhar, retorna string vazia
+            return ""
     
     def _extract_duque_caxias(self, text: str) -> NFSeData:
         """Extrai dados do padrão Duque de Caxias (ISSNet Online)"""
